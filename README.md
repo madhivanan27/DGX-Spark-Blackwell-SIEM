@@ -50,6 +50,8 @@ Common trade-offs:
 ### Blackwell SIEM
 This architecture shifts the expensive detection path onto the GPU and performs classification while the data is still moving through the ingestion pipeline.
 
+![Traditional SIEM vs Blackwell GPU SIEM](assets/siem_comparison.jpg)
+
 Key advantages:
 - **Active detection during ingestion**  
   Logs are not just collected and stored; they are tokenized, classified, and enriched before indexing.
@@ -204,6 +206,9 @@ docker compose logs morpheus -f | grep "EPS"
 
 ### Performance Visualization
 ![Blackwell SIEM Performance Summary](assets/performance_report.png)
+
+### Live Discovery & Enrichment
+![Kibana Discover Dashboard](assets/kibana_discover.png)
 
 ### Verified sustained profile
 
