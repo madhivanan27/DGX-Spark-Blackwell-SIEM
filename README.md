@@ -3,7 +3,20 @@
 
 A production-hardened SIEM pipeline optimized for **NVIDIA GB10 (Blackwell)** using **Morpheus 25.06**, **Triton Inference Server**, **Kafka KRaft**, and **Elasticsearch**.
 
-This project is designed to show how a GPU-native SIEM can ingest, classify, enrich, and index security telemetry at high speed while keeping detection latency low. Instead of relying only on CPU parsing and regex-heavy rules, the pipeline performs **active AI detection during ingestion**, so logs are analyzed as they move through the pipeline rather than waiting in storage for later correlation.
+This project demonstrates how a **GPU-native SIEM** can ingest, classify, enrich, and index security telemetry at high speed while keeping detection latency low. Instead of relying only on CPU parsing and regex-heavy rule chains, this pipeline performs **active AI detection during ingestion**, so events are analyzed while they move through the system rather than waiting in storage for later correlation.
+
+---
+
+## At a glance
+
+- **Single-node Blackwell reference architecture**
+- **21,300+ EPS peak throughput**
+- **13,800+ EPS sustained throughput**
+- **2.9s - 3.2s AI inference latency**
+- **Kafka in KRaft mode** (no ZooKeeper)
+- **8-shard Elasticsearch v2 index**
+- **Dead Letter Queue (DLQ)** for failed batches
+- **Basic Auth + retention enforcement + healthchecks**
 
 ---
 
@@ -12,6 +25,7 @@ This project is designed to show how a GPU-native SIEM can ingest, classify, enr
 Traditional SIEM stacks are strong at log collection and search, but they often become expensive and slow when event volume rises. As throughput grows, CPU-bound parsing, regex evaluation, and downstream indexing can introduce queueing delays.
 
 This project demonstrates a different model:
+
 - **GPU-native ingestion and preprocessing**
 - **Real-time AI classification with BERT**
 - **Modern Kafka in KRaft mode**
@@ -22,7 +36,7 @@ The goal is simple: **faster detection, higher throughput, and simpler scale-up 
 
 ---
 
-## Benefits over traditional SIEM
+## Traditional SIEM vs Blackwell SIEM
 
 ### Traditional SIEM
 Traditional SIEM platforms usually depend on CPU scaling, parser chains, regex extraction, and post-ingestion correlation. That works well for many environments, but it can struggle when traffic spikes or when semantic detection is required.
@@ -33,7 +47,7 @@ Common trade-offs:
 - More infrastructure required to scale
 - Limited understanding of semantic intent in raw log text
 
-### Blackwell Gold SIEM
+### Blackwell SIEM
 This architecture shifts the expensive detection path onto the GPU and performs classification while the data is still moving through the ingestion pipeline.
 
 Key advantages:
@@ -41,13 +55,13 @@ Key advantages:
   Logs are not just collected and stored; they are tokenized, classified, and enriched before indexing.
 
 - **Semantic analysis, not only pattern matching**  
-  The pipeline uses **BERT-Mini** to detect intent and meaning, which helps with threats that are harder to catch using static rules alone.
+  The pipeline uses **BERT-Mini** to detect intent and meaning, helping identify threats that are harder to catch with static rules alone.
 
 - **Low detection delay**  
   Alerts can be generated close to the ingestion path instead of waiting for delayed search jobs or scheduled correlation.
 
 - **Higher throughput on one node**  
-  GPU parallelism allows the system to handle large event volumes without scaling out a large CPU fleet.
+  GPU parallelism allows the system to process large event volumes without scaling out a large CPU fleet.
 
 - **Operational resilience**  
   KRaft removes ZooKeeper, the DLQ protects failed records, and retention enforcement keeps storage bounded.
@@ -56,7 +70,9 @@ Key advantages:
 
 ## What “active detection” means
 
-In many traditional pipelines, logs are first collected, parsed, stored, and only then searched or correlated. In this project, detection happens **inside the ingestion flow**:
+In many traditional pipelines, logs are first collected, parsed, stored, and only then searched or correlated.
+
+In this project, detection happens **inside the ingestion flow**:
 
 1. Logs enter Kafka.
 2. Workers consume them in parallel.
@@ -65,7 +81,7 @@ In many traditional pipelines, logs are first collected, parsed, stored, and onl
 5. The pipeline enriches results with scores and metadata.
 6. Incidents are indexed into Elasticsearch.
 
-That means the pipeline is not just a storage path. It is an **active detection engine**.
+This means the pipeline is not just a storage path. It is an **active detection engine**.
 
 ---
 
@@ -91,28 +107,35 @@ graph TD
     end
 ```
 
-### Component summary
+### Architecture summary
+
+This is a **single-node, GPU-centered SIEM pipeline** built around five main runtime services:
 
 - **Kafka (KRaft mode)**  
   Entry point for high-throughput telemetry ingestion without ZooKeeper.
 
-- **GPU workers**  
-  Consume messages in parallel, batch them, and send them through the AI path.
+- **Morpheus GPU workers**  
+  Consume messages in parallel, batch them, and run the detection path.
 
 - **Triton Inference Server**  
-  Runs the BERT-Mini model with dynamic batching for high GPU utilization.
+  Hosts the BERT-Mini model with dynamic batching for high GPU utilization.
 
 - **Elasticsearch v2 (8 shards)**  
-  Stores incidents and supports fast indexing plus dashboard queries.
+  Stores enriched incidents and supports fast indexing and query performance.
 
 - **Kibana**  
-  Provides analyst-facing search and dashboard visibility.
+  Provides analyst-facing dashboards and search visibility.
+
+### Supporting controls
 
 - **Retention worker**  
-  Keeps storage within the configured volume limit.
+  Keeps storage within the configured limit.
 
 - **DLQ (`morpheus_failed_logs`)**  
   Preserves failed batches instead of silently dropping them.
+
+- **Healthchecks**  
+  Improve restart safety and service visibility.
 
 ---
 
@@ -132,10 +155,10 @@ graph TD
 ## Quick start
 
 ### 1. Prerequisites
-- NVIDIA GB10 / Blackwell-capable host
+- NVIDIA GB10 / DGX Spark / Blackwell-capable host
 - NVIDIA Container Toolkit
 - Docker Compose v2.20+
-- Sufficient RAM / disk for Elasticsearch and benchmarks
+- Sufficient RAM and disk for Elasticsearch and benchmark runs
 
 ### 2. Clone the repository
 ```bash
@@ -183,6 +206,7 @@ docker compose logs morpheus -f | grep "EPS"
 ![Blackwell SIEM Performance Summary](assets/performance_report.png)
 
 ### Verified sustained profile
+
 | Metric | Result |
 | :--- | :--- |
 | Max Throughput | 21,300+ EPS |
@@ -202,25 +226,31 @@ Calculated based on the verified **15,000 EPS** production baseline:
 | **Per Hour** | 54 Million | ~65 GB |
 | **Per Day** | **1.29 Billion** | **~1.55 Terabytes** |
 
-> [!NOTE]
-> This represents a **100% active classification rate**. Every single one of the 1.29 billion logs is passed through the BERT-Mini model on the Blackwell GPU before reaching storage.
+### How to read these numbers
 
-### Interpretation
-- **Burst throughput** shows the ceiling the system can reach.
-- **Sustained throughput** shows the stable long-run production baseline.
+- **Peak throughput** shows the upper burst ceiling.
+- **Sustained throughput** shows the stable long-duration production baseline.
 - **Inference latency** shows how quickly the AI stage completes under load.
 - **DLQ = 0** indicates clean processing during the validated run.
 
 ---
 
-## Security and access
+## Security and operations
 
-Use environment variables or a local `.env` file for credentials in real deployments.
+For real deployments, use environment variables or a local `.env` file for credentials.
 
 Example:
 ```bash
 ELASTIC_USER=elastic
 ELASTIC_PASSWORD=change-me
+```
+
+Recommended operational checks:
+```bash
+docker compose ps
+docker compose logs morpheus --tail=50
+docker compose logs triton-morpheus --tail=50
+docker compose logs elasticsearch --tail=50
 ```
 
 Do not publish real credentials in a public repository.
@@ -245,4 +275,4 @@ Licensed under the **MIT License**.
 
 ## Notes
 
-This repository focuses on a **single-node Blackwell reference architecture** that demonstrates how active AI detection can be embedded directly into the ingestion path. Blackwell is designed for high-throughput AI workloads, and modern AI-oriented SIEM approaches increasingly emphasize real-time analysis and semantic detection rather than relying only on traditional static parsing and delayed correlation.
+This repository focuses on a **single-node Blackwell reference architecture** that demonstrates how active AI detection can be embedded directly into the ingestion path.
