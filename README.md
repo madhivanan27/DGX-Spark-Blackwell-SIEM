@@ -177,7 +177,10 @@ docker compose logs morpheus -f | grep "EPS"
 
 ---
 
-## Benchmarks
+## 📊 Benchmarks & Scalability
+
+### Performance Visualization
+![Blackwell SIEM Performance Summary](assets/performance_report.png)
 
 ### Verified sustained profile
 | Metric | Result |
@@ -189,6 +192,18 @@ docker compose logs morpheus -f | grep "EPS"
 | CPU Utilization | ~15% host average |
 | GPU Utilization | High / near saturation |
 | DLQ Reroutes | 0 during final sustained test |
+
+### Sustainability at Scale (Daily Volume)
+Calculated based on the verified **15,000 EPS** production baseline:
+
+| Timeframe | Log Volume | Estimated Data (Enriched) |
+| :--- | :--- | :--- |
+| **Per Second** | 15,000 | ~18 MB |
+| **Per Hour** | 54 Million | ~65 GB |
+| **Per Day** | **1.29 Billion** | **~1.55 Terabytes** |
+
+> [!NOTE]
+> This represents a **100% active classification rate**. Every single one of the 1.29 billion logs is passed through the BERT-Mini model on the Blackwell GPU before reaching storage.
 
 ### Interpretation
 - **Burst throughput** shows the ceiling the system can reach.
