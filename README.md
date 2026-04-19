@@ -1,106 +1,233 @@
 # 🏆 NVIDIA Blackwell SIEM: "Gold" Hardened Pipeline
 ### 21,300+ EPS | GPU-Native AI Detection | KRaft Modernized
 
-This repository contains the **Blackwell Gold** SIEM architecture—a production-hardened, high-velocity security ingestion engine optimized for **NVIDIA GB10 (Blackwell)** hardware. It leverages the Morpheus 25.06 runtime to achieve real-time AI classification at massive scale.
+A production-hardened SIEM pipeline optimized for **NVIDIA GB10 (Blackwell)** using **Morpheus 25.06**, **Triton Inference Server**, **Kafka KRaft**, and **Elasticsearch**.
+
+This project is designed to show how a GPU-native SIEM can ingest, classify, enrich, and index security telemetry at high speed while keeping detection latency low. Instead of relying only on CPU parsing and regex-heavy rules, the pipeline performs **active AI detection during ingestion**, so logs are analyzed as they move through the pipeline rather than waiting in storage for later correlation.
 
 ---
 
-## 🏛️ Architecture: Blackwell "Gold" vs. Traditional
+## Why this project matters
 
-### Traditional SIEM (CPU-Bound)
-Traditional SIEMs (Splunk, standard ELK) rely on horizontal CPU scaling. They typically process logs using **Regular Expressions (Regex)**, which are computationally expensive and struggle with complex semantic threats (Phishing, DGA, Malware intent).
-*   **Bottleneck**: Ingestion caps early (1k-3k EPS per node).
-*   **Latency**: Detection often lags by minutes as logs queue for CPU cycles.
-*   **Cost**: Massive server footprints required for high-volume logs.
+Traditional SIEM stacks are strong at log collection and search, but they often become expensive and slow when event volume rises. As throughput grows, CPU-bound parsing, regex evaluation, and downstream indexing can introduce queueing delays.
 
-### Blackwell Gold SIEM (GPU-Native)
-Our architecture shifts the heavy lifting to the **Vectorized GPU Plane**. By using **cuDF** and **Triton Inference Server**, we achieve massive parallelism that standard CPU architectures cannot match.
-*   **Ingestion**: 15,000 - 21,000+ EPS on a single Blackwell node.
-*   **Detection**: Uses **BERT-Mini** for semantic understanding, not just pattern matching.
-*   **Stability**: **KRaft-mode Kafka** eliminates Zookeeper, reducing infrastructure complexity by 20%.
+This project demonstrates a different model:
+- **GPU-native ingestion and preprocessing**
+- **Real-time AI classification with BERT**
+- **Modern Kafka in KRaft mode**
+- **Authenticated, sharded Elasticsearch storage**
+- **Operational hardening with DLQ, healthchecks, and retention controls**
+
+The goal is simple: **faster detection, higher throughput, and simpler scale-up on a single Blackwell node**.
+
+---
+
+## Benefits over traditional SIEM
+
+### Traditional SIEM
+Traditional SIEM platforms usually depend on CPU scaling, parser chains, regex extraction, and post-ingestion correlation. That works well for many environments, but it can struggle when traffic spikes or when semantic detection is required.
+
+Common trade-offs:
+- Lower throughput per node
+- Higher detection latency under sustained load
+- More infrastructure required to scale
+- Limited understanding of semantic intent in raw log text
+
+### Blackwell Gold SIEM
+This architecture shifts the expensive detection path onto the GPU and performs classification while the data is still moving through the ingestion pipeline.
+
+Key advantages:
+- **Active detection during ingestion**  
+  Logs are not just collected and stored; they are tokenized, classified, and enriched before indexing.
+
+- **Semantic analysis, not only pattern matching**  
+  The pipeline uses **BERT-Mini** to detect intent and meaning, which helps with threats that are harder to catch using static rules alone.
+
+- **Low detection delay**  
+  Alerts can be generated close to the ingestion path instead of waiting for delayed search jobs or scheduled correlation.
+
+- **Higher throughput on one node**  
+  GPU parallelism allows the system to handle large event volumes without scaling out a large CPU fleet.
+
+- **Operational resilience**  
+  KRaft removes ZooKeeper, the DLQ protects failed records, and retention enforcement keeps storage bounded.
+
+---
+
+## What “active detection” means
+
+In many traditional pipelines, logs are first collected, parsed, stored, and only then searched or correlated. In this project, detection happens **inside the ingestion flow**:
+
+1. Logs enter Kafka.
+2. Workers consume them in parallel.
+3. The GPU tokenizes and prepares batches.
+4. Triton runs BERT inference.
+5. The pipeline enriches results with scores and metadata.
+6. Incidents are indexed into Elasticsearch.
+
+That means the pipeline is not just a storage path. It is an **active detection engine**.
+
+---
+
+## Current architecture
 
 ```mermaid
 graph TD
     subgraph "Data Plane"
-        A[Raw Telemetry] -->|15k EPS| B[(Kafka KRaft)]
+        A[Raw Telemetry] -->|15k+ EPS| B[(Kafka KRaft)]
     end
 
     subgraph "Vectorized Ingestion (GB10)"
-        B -->|cuDF| C[GPU Worker]
-        C <-->|Shared VRAM| D{Triton Cluster}
-        D -.->|BERT AI| C
+        B -->|Parallel Consumers| C[GPU Workers]
+        C -->|cuDF Tokenization| D[Triton Inference Server]
+        D -->|BERT-Mini Classification| C
+        C -->|Enrichment + Priority| E[(Elasticsearch v2)]
     end
 
-    subgraph "Secure Storage"
-        C -->|Authenticated| E[(Elasticsearch v2)]
+    subgraph "Operations & Visibility"
         E --> F[Kibana Dashboard]
-        G[Retention Mgr] -.->|20GB Limit| E
+        G[Retention Manager] -.->|20GB Limit| E
+        H[Dead Letter Queue] -.->|Failed Batches| B
     end
 ```
 
+### Component summary
+
+- **Kafka (KRaft mode)**  
+  Entry point for high-throughput telemetry ingestion without ZooKeeper.
+
+- **GPU workers**  
+  Consume messages in parallel, batch them, and send them through the AI path.
+
+- **Triton Inference Server**  
+  Runs the BERT-Mini model with dynamic batching for high GPU utilization.
+
+- **Elasticsearch v2 (8 shards)**  
+  Stores incidents and supports fast indexing plus dashboard queries.
+
+- **Kibana**  
+  Provides analyst-facing search and dashboard visibility.
+
+- **Retention worker**  
+  Keeps storage within the configured volume limit.
+
+- **DLQ (`morpheus_failed_logs`)**  
+  Preserves failed batches instead of silently dropping them.
+
 ---
 
-## 🚀 Key Features
-*   **Triton Twinning**: Dual-model instance configuration to saturate Blackwell Tensor Cores.
-*   **KRaft Infrastructure**: Zero-Zookeeper Kafka stack for faster cold starts and higher reliability.
-*   **Dead Letter Queue (DLQ)**: Zero-data-loss insurance—failed detections are rerouted to `morpheus_failed_logs`.
-*   **8-Shard Parallelism**: Optimized Elasticsearch write-plane for unthrottled ingestion.
-*   **Hardened Security**: Full Basic Authentication enforced across the entire data plane.
+## Key features
+
+- **Triton dual-instance configuration** for higher GPU concurrency
+- **Dynamic batching** to reduce inference queue overhead
+- **Kafka KRaft mode** for a simpler and more modern broker setup
+- **Dead Letter Queue (DLQ)** for safer error handling
+- **8-shard Elasticsearch index** for improved indexing throughput
+- **Basic authentication** across the storage plane
+- **Retention enforcement** to cap disk growth
+- **Healthchecks** for service reliability and restart safety
 
 ---
 
-## 🏁 Getting Started
+## Quick start
 
 ### 1. Prerequisites
-*   **NVIDIA GB10 (Blackwell)** Host
-*   **NVIDIA Container Toolkit** installed
-*   **Docker Compose v2.20+**
+- NVIDIA GB10 / Blackwell-capable host
+- NVIDIA Container Toolkit
+- Docker Compose v2.20+
+- Sufficient RAM / disk for Elasticsearch and benchmarks
 
-### 2. Deployment
+### 2. Clone the repository
 ```bash
-# Clone and enter the repo
 git clone https://github.com/madhivanan27/DGX-Spark-Blackwell-SIEM.git
 cd DGX-Spark-Blackwell-SIEM
+```
 
-# Initialize the 8-shard secure storage
+### 3. Initialize storage
+```bash
 ./v2_GOLD_RESTORE.sh
+```
 
-# Launch the stack
+### 4. Launch the stack
+```bash
 docker compose up -d
 ```
 
-### 3. Verify Health
+### 5. Verify health
 ```bash
 docker compose ps
-# Expected: All 5 containers (kafka, elasticsearch, triton, kibana, morpheus) = Healthy
 ```
 
-### 4. Run Stress Test
+Expected services:
+- kafka
+- elasticsearch
+- triton-morpheus
+- kibana
+- morpheus
+
+### 6. Run a stress test
 ```bash
-# Trigger a 5-minute 15k EPS burst
 ./stress_test/run_5min_test.sh
 ```
 
+### 7. Monitor live throughput
+```bash
+docker compose logs morpheus -f | grep "EPS"
+```
+
 ---
 
-## 📊 Benchmarks (Verified 30-Min Sustained)
-| Metric | Sustained Result |
+## Benchmarks
+
+### Verified sustained profile
+| Metric | Result |
 | :--- | :--- |
-| **Max Throughput** | 21,300 EPS |
-| **Normal Load** | 15,000 EPS |
-| **AI Inference Latency** | 2.9 - 3.2 Seconds |
-| **Total Ingested (30m)** | 3.79 Million Documents |
-| **CPU Utilization** | ~15% (Host Average) |
-| **GPU Utilization** | 94% (Memory Saturation) |
+| Max Throughput | 21,300+ EPS |
+| Sustained Throughput | 13,800+ EPS |
+| AI Inference Latency | 2.9 - 3.2 seconds |
+| Total Ingested (30 min) | 3.79 million incidents |
+| CPU Utilization | ~15% host average |
+| GPU Utilization | High / near saturation |
+| DLQ Reroutes | 0 during final sustained test |
+
+### Interpretation
+- **Burst throughput** shows the ceiling the system can reach.
+- **Sustained throughput** shows the stable long-run production baseline.
+- **Inference latency** shows how quickly the AI stage completes under load.
+- **DLQ = 0** indicates clean processing during the validated run.
 
 ---
 
-## 🔐 Credentials
-*   **User**: `elastic`
-*   **Password**: `MorpheusSOC2026!`
-*   **Services**: All components (Indexers, Dashboards, Workers) use these credentials over the internal `siem-net`.
+## Security and access
+
+Use environment variables or a local `.env` file for credentials in real deployments.
+
+Example:
+```bash
+ELASTIC_USER=elastic
+ELASTIC_PASSWORD=change-me
+```
+
+Do not publish real credentials in a public repository.
 
 ---
 
-## ⚖️ License
-Licensed under the **MIT License**. Created by the Google Deepmind team for Advanced Agentic Coding.
+## Who this is for
+
+This project is useful for:
+- SOC engineers evaluating GPU-native SIEM pipelines
+- Security architects testing AI-assisted detection at ingestion time
+- Platform engineers building high-throughput telemetry systems
+- Teams exploring Morpheus + Triton + Elasticsearch on Blackwell
+
+---
+
+## License
+
+Licensed under the **MIT License**.
+
+---
+
+## Notes
+
+This repository focuses on a **single-node Blackwell reference architecture** that demonstrates how active AI detection can be embedded directly into the ingestion path. Blackwell is designed for high-throughput AI workloads, and modern AI-oriented SIEM approaches increasingly emphasize real-time analysis and semantic detection rather than relying only on traditional static parsing and delayed correlation.
