@@ -1,0 +1,125 @@
+version: '3.8'
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    ports:
+      - 29092:29092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    networks:
+      - siem-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.authc.api_key.enabled=true
+      - ELASTIC_PASSWORD=MorpheusSOC2026!
+      - "cluster.routing.allocation.disk.watermark.low=4gb"
+      - "cluster.routing.allocation.disk.watermark.high=3gb"
+      - "cluster.routing.allocation.disk.watermark.flood_stage=2gb"
+      - "cluster.info.update.interval=10s"
+      - "ES_JAVA_OPTS=-Xms4g -Xmx4g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    networks:
+      - siem-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f -u elastic:MorpheusSOC2026! http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    ports:
+      - 5601:5601
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: MorpheusSOC2026!
+    networks:
+      - siem-net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  triton-morpheus:
+    image: nvcr.io/nvidia/tritonserver:25.02-py3
+    container_name: morpheus-siem-complete-triton-morpheus-1
+    command: tritonserver --model-repository=/models --allow-gpu-metrics=true --log-verbose=false
+    ports:
+      - 8000:8000
+      - 8001:8001
+      - 8002:8002
+    volumes:
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - siem-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/v2/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  morpheus:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - CUPY_NVCC_GENERATE_CODE=arch=compute_121,code=sm_121
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - siem-net
+    depends_on:
+      kafka:
+        condition: service_started
+      triton-morpheus:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  retention-worker:
+    build:
+      context: .
+      dockerfile: stress_test/Dockerfile
+    volumes:
+      - ./stress_test/retention_worker.py:/app/retention_worker.py
+    networks:
+      - siem-net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  es-data:
+
+networks:
+  siem-net:
