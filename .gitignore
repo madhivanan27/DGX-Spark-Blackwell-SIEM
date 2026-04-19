@@ -1,0 +1,7 @@
+/backups/
+*.log
+*.bak
+test_cudf.py
+test_cudf_apply.py
+live_ingester.py
+__pycache__/
